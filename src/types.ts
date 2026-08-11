@@ -34,6 +34,33 @@ export interface StockResult {
   allTrades: TradeLog[];
 }
 
+export interface DarvasResult {
+  symbol: string;
+  date: string;
+  timestamp: string;
+  lastClose: number;
+  boxTop: number | null;
+  boxBottom: number | null;
+  pending: boolean;
+  distanceToBreakout: number | null; // % away from box top, only set when pending
+  totalReturn: number;               // compounded historical return, used to rank best performers
+  winRate: number;
+  pf: number;
+  avgReturn: number;
+  maxdd: number;
+  wins: number;
+  losses: number;
+  trades: number;
+  allTrades: TradeLog[];
+}
+
+export interface DarvasStats {
+  universe: number;
+  scanned: number;
+  pendingCount: number;
+  lastRunTime?: string;
+}
+
 export interface ScanProgress {
   scanned: number;
   total: number;

@@ -4,9 +4,10 @@ import { StatsBar } from './components/StatsBar';
 import { ProgressBar } from './components/ProgressBar';
 import { StockTable } from './components/StockTable';
 import { BbCrsiTable } from './components/BbCrsiTable';
+import { DarvasTable } from './components/DarvasTable';
 import { StrategyInfoModal } from './components/StrategyInfoModal';
 import { SettingsModal } from './components/SettingsModal';
-import { StockResult, ScanProgress, ScanStats, FilterMode } from './types';
+import { StockResult, DarvasResult, ScanProgress, ScanStats, FilterMode } from './types';
 import { Play, Square, RotateCcw, Zap, Filter } from 'lucide-react';
 
 export default function App() {
@@ -20,9 +21,17 @@ export default function App() {
   const [viewMode, setViewMode]           = useState<'live' | 'all'>('all');
   const [customSymbols, setCustomSymbols] = useState<string>('');
   const [isStrategyModalOpen, setIsStrategyModalOpen] = useState(false);
-  const [activeTab, setActiveTab] = useState<'crsi' | 'bbcrsi'>('crsi');
+  const [activeTab, setActiveTab] = useState<'crsi' | 'bbcrsi' | 'darvas'>('crsi');
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
   const eventSourceRef = useRef<EventSource | null>(null);
+
+  // ── Darvas Box module state (separate scan pipeline) ──
+  const [darvasResults, setDarvasResults]     = useState<DarvasResult[]>([]);
+  const [isDarvasScanning, setIsDarvasScanning] = useState<boolean>(false);
+  const [darvasProgress, setDarvasProgress]   = useState<ScanProgress>({ scanned: 0, total: 500, currentSymbol: '' });
+  const [darvasScanned, setDarvasScanned]     = useState<number>(0);
+  const [darvasLastRun, setDarvasLastRun]     = useState<string | undefined>(undefined);
+  const darvasEventSourceRef = useRef<EventSource | null>(null);
 
   const PRESETS: Record<FilterMode, { crsi: number; adx: number }> = {
     strict:  { crsi: 10, adx: 29 },
@@ -95,6 +104,55 @@ export default function App() {
     setStats(prev => ({ ...prev, scanned: 0, gatePassed: 0, liveSignalCount: 0, lastRunTime: undefined }));
   };
 
+  // ── Darvas Box scan ──
+  const stopDarvasScan = () => {
+    darvasEventSourceRef.current?.close();
+    darvasEventSourceRef.current = null;
+    setIsDarvasScanning(false);
+  };
+
+  const startDarvasScan = () => {
+    if (isDarvasScanning) return;
+    setDarvasResults([]);
+    setIsDarvasScanning(true);
+    setDarvasProgress({ scanned: 0, total: stats.universe || 500, currentSymbol: '' });
+    setDarvasScanned(0);
+
+    let query = '';
+    if (customSymbols.trim()) query = `?symbols=${encodeURIComponent(customSymbols.trim())}`;
+
+    const es = new EventSource(`/api/scan-darvas${query}`);
+    darvasEventSourceRef.current = es;
+
+    es.onmessage = (e) => {
+      try {
+        const msg = JSON.parse(e.data);
+        if (msg.type === 'start') {
+          setDarvasProgress(prev => ({ ...prev, total: msg.total }));
+        } else if (msg.type === 'progress') {
+          setDarvasProgress(prev => ({ ...prev, scanned: msg.i, total: msg.total, currentSymbol: msg.sym }));
+          setDarvasScanned(msg.i);
+        } else if (msg.type === 'result') {
+          setDarvasResults(prev => [...prev, msg]);
+        } else if (msg.type === 'done') {
+          setIsDarvasScanning(false);
+          es.close();
+          darvasEventSourceRef.current = null;
+          setDarvasLastRun(new Date().toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
+        }
+      } catch (err) { console.error('SSE error', err); }
+    };
+    es.onerror = () => { setIsDarvasScanning(false); darvasEventSourceRef.current?.close(); darvasEventSourceRef.current = null; };
+  };
+
+  const clearDarvas = () => {
+    stopDarvasScan();
+    setDarvasResults([]);
+    setDarvasProgress({ scanned: 0, total: stats.universe, currentSymbol: '' });
+    setDarvasScanned(0);
+    setDarvasLastRun(undefined);
+  };
+
   const switchMode = (mode: FilterMode) => {
     setFilterMode(mode);
     if (isScanning) { stopScan(); clearAll(); }
@@ -120,20 +178,36 @@ export default function App() {
               <p className="text-xs mt-0.5" style={{ color: '#94a3b8' }}>ConnorsRSI(3,2,100) · ADX(14) · EMA(200) · Nifty 500 · Gate Filter Engine</p>
             </div>
             <div className="flex items-center gap-2 shrink-0">
-              {isScanning ? (
-                <button onClick={stopScan}
-                  className="flex items-center gap-2 px-5 py-2 rounded-lg text-xs font-semibold cursor-pointer transition-all"
-                  style={{ background: '#ef4444', color: 'white', border: 'none' }}>
-                  <Square className="w-3.5 h-3.5 fill-white" /> Stop
-                </button>
+              {activeTab === 'darvas' ? (
+                isDarvasScanning ? (
+                  <button onClick={stopDarvasScan}
+                    className="flex items-center gap-2 px-5 py-2 rounded-lg text-xs font-semibold cursor-pointer transition-all"
+                    style={{ background: '#ef4444', color: 'white', border: 'none' }}>
+                    <Square className="w-3.5 h-3.5 fill-white" /> Stop
+                  </button>
+                ) : (
+                  <button onClick={startDarvasScan}
+                    className="flex items-center gap-2 px-5 py-2 rounded-lg text-xs font-semibold cursor-pointer transition-all"
+                    style={{ background: '#f59e0b', color: '#000', border: 'none' }}>
+                    <Play className="w-3.5 h-3.5 fill-black" /> Run scan
+                  </button>
+                )
               ) : (
-                <button onClick={() => startScan()}
-                  className="flex items-center gap-2 px-5 py-2 rounded-lg text-xs font-semibold cursor-pointer transition-all"
-                  style={{ background: '#6366f1', color: 'white', border: 'none' }}>
-                  <Play className="w-3.5 h-3.5 fill-white" /> Run scan
-                </button>
+                isScanning ? (
+                  <button onClick={stopScan}
+                    className="flex items-center gap-2 px-5 py-2 rounded-lg text-xs font-semibold cursor-pointer transition-all"
+                    style={{ background: '#ef4444', color: 'white', border: 'none' }}>
+                    <Square className="w-3.5 h-3.5 fill-white" /> Stop
+                  </button>
+                ) : (
+                  <button onClick={() => startScan()}
+                    className="flex items-center gap-2 px-5 py-2 rounded-lg text-xs font-semibold cursor-pointer transition-all"
+                    style={{ background: '#6366f1', color: 'white', border: 'none' }}>
+                    <Play className="w-3.5 h-3.5 fill-white" /> Run scan
+                  </button>
+                )
               )}
-              <button onClick={clearAll}
+              <button onClick={activeTab === 'darvas' ? clearDarvas : clearAll}
                 className="flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-semibold cursor-pointer transition-all"
                 style={{ background: 'transparent', color: '#64748b', border: '0.5px solid #2a2d3a' }}>
                 <RotateCcw className="w-3.5 h-3.5" />
@@ -142,7 +216,8 @@ export default function App() {
             </div>
           </div>
 
-          {/* Filter mode buttons */}
+          {/* Filter mode buttons — only relevant to the CRSI-based modules */}
+          {activeTab !== 'darvas' && (
           <div className="p-4 flex flex-col sm:flex-row gap-3">
             <button onClick={() => switchMode('strict')}
               className="flex-1 p-4 rounded-lg text-left cursor-pointer transition-all"
@@ -182,9 +257,10 @@ export default function App() {
               </p>
             </button>
           </div>
+          )}
         </div>
 
-        <ProgressBar progress={progress} isScanning={isScanning} />
+        <ProgressBar progress={activeTab === 'darvas' ? darvasProgress : progress} isScanning={activeTab === 'darvas' ? isDarvasScanning : isScanning} />
 
         {/* Module Tabs */}
         <div style={{ display: 'flex', gap: 4, borderBottom: '1px solid #2a2d3a', marginBottom: 0 }}>
@@ -220,6 +296,22 @@ export default function App() {
               {allResults.filter(r => r.bbCrsiGate).length}
             </span>
           </button>
+          <button
+            onClick={() => setActiveTab('darvas')}
+            style={{
+              padding: '10px 20px', fontSize: 13, fontWeight: 600, cursor: 'pointer',
+              background: activeTab === 'darvas' ? '#161b27' : 'transparent',
+              border: 'none',
+              borderBottom: activeTab === 'darvas' ? '2px solid #f59e0b' : '2px solid transparent',
+              color: activeTab === 'darvas' ? '#f1f5f9' : '#64748b',
+              borderRadius: '8px 8px 0 0',
+              transition: 'all 0.15s',
+            }}>
+            📦 Darvas Box
+            <span style={{ marginLeft: 6, background: activeTab === 'darvas' ? 'rgba(245,158,11,0.2)' : '#1e2030', borderRadius: 10, padding: '1px 7px', fontSize: 11, color: activeTab === 'darvas' ? '#f59e0b' : '#475569' }}>
+              {darvasResults.filter(r => r.pending).length}
+            </span>
+          </button>
         </div>
 
         {activeTab === 'crsi' ? (
@@ -230,12 +322,17 @@ export default function App() {
             isScanning={isScanning}
             crsiLimit={PRESETS[filterMode].crsi}
           />
-        ) : (
+        ) : activeTab === 'bbcrsi' ? (
           <BbCrsiTable
             results={allResults.filter(r => r.bbCrsiGate)}
             viewMode={viewMode}
             onViewChange={setViewMode}
             isScanning={isScanning}
+          />
+        ) : (
+          <DarvasTable
+            results={darvasResults}
+            isScanning={isDarvasScanning}
           />
         )}
       </main>
