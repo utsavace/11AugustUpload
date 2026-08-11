@@ -263,6 +263,103 @@ function backtestBbCrsi(bars: Bar[], crsiBuyLimit = 15, adxThreshold = 29) {
   return trades;
 }
 
+// ── DARVAS BOX ENGINE ──────────────────────────────────
+// Box formation: a new high resets the box. If 3 consecutive days pass
+// without a new high, the top is confirmed. Then the lowest low in the
+// following days is tracked; 3 consecutive days without a new low confirms
+// the bottom. BUY on close above confirmed box top. Stop-loss = box bottom,
+// trailed up as new higher boxes get confirmed while in the trade.
+// EXIT on close below the trailing stop.
+interface DarvasOutcome {
+  trades: Trade[];
+  boxTop: number | null;
+  boxBottom: number | null;
+  pending: boolean;             // box ready, price hasn't broken out yet (and no open trade)
+  distanceToBreakout: number | null; // % close is below box top, only set when pending
+}
+
+function calcDarvasBox(bars: Bar[], confirmDays = 3): DarvasOutcome {
+  const n = bars.length;
+  const trades: Trade[] = [];
+
+  let highestHighSoFar = -Infinity;
+  let boxTopCandidate: number | null = null;
+  let daysSinceNewHigh = 0;
+  let topConfirmed = false;
+  let lowestLowCandidate: number | null = null;
+  let daysSinceNewLow = 0;
+  let bottomConfirmed = false;
+  let currentBoxTop: number | null = null;
+  let currentBoxBottom: number | null = null;
+
+  let inTrade = false, entryPrice = 0, entryDate = 0, trailStop = 0;
+
+  for (let i = 0; i < n; i++) {
+    const { h, l, c, t } = bars[i];
+
+    if (h > highestHighSoFar) {
+      highestHighSoFar = h;
+      boxTopCandidate = h;
+      daysSinceNewHigh = 0;
+      topConfirmed = false;
+      bottomConfirmed = false;
+      lowestLowCandidate = null;
+    } else {
+      daysSinceNewHigh++;
+      if (!topConfirmed && daysSinceNewHigh >= confirmDays) {
+        topConfirmed = true;
+        lowestLowCandidate = l;
+        daysSinceNewLow = 0;
+      }
+      if (topConfirmed && !bottomConfirmed && lowestLowCandidate !== null) {
+        if (l < lowestLowCandidate) {
+          lowestLowCandidate = l;
+          daysSinceNewLow = 0;
+        } else {
+          daysSinceNewLow++;
+          if (daysSinceNewLow >= confirmDays) {
+            bottomConfirmed = true;
+            currentBoxTop = boxTopCandidate;
+            currentBoxBottom = lowestLowCandidate;
+            if (inTrade && currentBoxBottom !== null && currentBoxBottom > trailStop) {
+              trailStop = currentBoxBottom; // trail SL up as price makes new higher boxes
+            }
+          }
+        }
+      }
+    }
+
+    if (!inTrade) {
+      if (currentBoxTop !== null && c > currentBoxTop) {
+        inTrade = true;
+        entryPrice = c;
+        entryDate = t;
+        trailStop = currentBoxBottom ?? l;
+      }
+    } else {
+      if (c < trailStop) {
+        const ret = (c - entryPrice) / entryPrice * 100 - 0.2; // slippage/costs, same convention as CRSI engine
+        trades.push({ entryDate, entryPrice, exitDate: t, exitPrice: c, ret, win: ret > 0 });
+        inTrade = false;
+      }
+    }
+  }
+
+  const lastClose = n > 0 ? bars[n - 1].c : null;
+  const pending = !inTrade && currentBoxTop !== null && lastClose !== null && lastClose < currentBoxTop;
+  const distanceToBreakout = pending && lastClose !== null && currentBoxTop !== null
+    ? +(((currentBoxTop - lastClose) / lastClose) * 100).toFixed(2)
+    : null;
+
+  return { trades, boxTop: currentBoxTop, boxBottom: currentBoxBottom, pending, distanceToBreakout };
+}
+
+function calcCompoundedReturn(trades: Trade[]): number {
+  if (trades.length === 0) return 0;
+  const eq = trades.reduce((acc, t) => acc * (1 + t.ret / 100), 1);
+  return +((eq - 1) * 100).toFixed(2);
+}
+
 // Gate check — two modes
 function gatePass(trades: Trade[], mode: 'strict' | 'lenient') {
   const minTrades = 10;
@@ -420,6 +517,70 @@ app.get('/api/scan', async (req, res) => {
         bbCrsiPf:     bbCrsiStats?.pf ?? null,
         bbCrsiTrades: bbCrsiTrades.length,
         bbCrsiAvg:    bbCrsiStats?.avg ?? null,
+        allTrades: trades.slice(-15).map(t => ({
+          entryDate:  new Date(t.entryDate).toISOString().slice(0, 10),
+          exitDate:   new Date(t.exitDate).toISOString().slice(0, 10),
+          entryPrice: +t.entryPrice.toFixed(2),
+          exitPrice:  +t.exitPrice.toFixed(2),
+          ret: +t.ret.toFixed(2), win: t.win,
+        })),
+      });
+    } catch (_) { /* skip failed stocks */ }
+
+    await sleep(80);
+  }
+
+  send('done', { total: stockList.length });
+  res.end();
+});
+
+// SSE SCAN — Darvas Box module
+app.get('/api/scan-darvas', async (req, res) => {
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.setHeader('Access-Control-Allow-Origin', '*');
+
+  const send = (type: string, data: any) =>
+    res.write(`data: ${JSON.stringify({ type, ...data })}\n\n`);
+
+  const customStr = req.query.symbols ? String(req.query.symbols) : '';
+  const stockList = customStr
+    ? customStr.split(',').map(s => s.trim().toUpperCase()).filter(Boolean)
+    : STOCKS;
+
+  send('start', { total: stockList.length });
+
+  for (let i = 0; i < stockList.length; i++) {
+    const sym = stockList[i];
+    send('progress', { i: i + 1, total: stockList.length, sym });
+
+    try {
+      const bars = await fetchYahooChart(sym);
+      if (!bars) { await sleep(50); continue; }
+
+      const { trades, boxTop, boxBottom, pending, distanceToBreakout } = calcDarvasBox(bars);
+
+      // Need either a usable trade history (to rank as performer) or an active pending setup
+      if (trades.length === 0 && !pending) { await sleep(50); continue; }
+
+      const stats = trades.length > 0
+        ? calcStats(trades)
+        : { wr: 0, pf: 0, avg: 0, md: 0, wins: 0, losses: 0 };
+      const totalReturn = calcCompoundedReturn(trades);
+
+      const lastBar = bars[bars.length - 1];
+      const lastClose = +lastBar.c.toFixed(2);
+      const date = new Date(lastBar.t).toISOString().slice(0, 10);
+      const timestamp = new Date().toLocaleTimeString('en-US', { timeZone: 'Asia/Kolkata', hour12: true, hour: '2-digit', minute: '2-digit', second: '2-digit' });
+
+      send('result', {
+        symbol: sym, date, timestamp, lastClose,
+        boxTop: boxTop !== null ? +boxTop.toFixed(2) : null,
+        boxBottom: boxBottom !== null ? +boxBottom.toFixed(2) : null,
+        pending, distanceToBreakout, totalReturn,
+        winRate: stats.wr, pf: stats.pf, avgReturn: stats.avg, maxdd: stats.md,
+        wins: stats.wins, losses: stats.losses, trades: trades.length,
         allTrades: trades.slice(-15).map(t => ({
           entryDate:  new Date(t.entryDate).toISOString().slice(0, 10),
           exitDate:   new Date(t.exitDate).toISOString().slice(0, 10),
