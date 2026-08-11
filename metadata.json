@@ -1,0 +1,6 @@
+{
+  "name": "NSE ConnorsRSI Screener",
+  "description": "NSE Stock Screener with ConnorsRSI(3,2,100), ADX(14) > 29, EMA(200) trend filter, and backtesting engine.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
