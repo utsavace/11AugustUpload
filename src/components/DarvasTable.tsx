@@ -12,8 +12,10 @@ const MUTED   = '#cbd5e1';
 const DIM     = '#94a3b8';
 const MONO    = 'JetBrains Mono, monospace';
 
-const TOP_N = 40;         // Top 40 Pending Breakout Candidates
+const TOP_N = 10;            // Top 10 Pending Breakout Candidates
 const BEST_PERFORMER_N = 15; // Top 15 all-time performers used for the badge
+const MIN_WIN_RATE = 70;     // only show setups with historical win rate >= 70%
+const MIN_TRADES = 7;        // and a minimum sample size of 7 backtest trades
 
 type SortField = 'distanceToBreakout' | 'symbol' | 'lastClose' | 'winRate' | 'pf' | 'totalReturn' | 'trades' | 'avgReturn' | 'maxdd';
 
@@ -26,17 +28,21 @@ export const DarvasTable: React.FC<{
   const [sortField, setSortField] = useState<SortField>('distanceToBreakout');
   const [sortAsc, setSortAsc] = useState(true);
 
-  // Best performers = top 15 by all-time compounded return, computed across the WHOLE
-  // scanned universe (not just the pending ones), same definition as the algorithm doc.
   const bestPerformerSymbols = useMemo(() => {
     const withTrades = results.filter(r => r.trades > 0);
     const top = [...withTrades].sort((a, b) => b.totalReturn - a.totalReturn).slice(0, BEST_PERFORMER_N);
     return new Set(top.map(r => r.symbol));
   }, [results]);
 
-  // Pending breakout candidates, closest to breakout first, capped at top 40
+  // Pending breakout candidates, filtered by win-rate & sample-size quality,
+  // closest to breakout first, capped at top 10
   const candidates = useMemo(() => {
-    const pending = results.filter(r => r.pending && r.distanceToBreakout !== null);
+    const pending = results.filter(r =>
+      r.pending &&
+      r.distanceToBreakout !== null &&
+      r.winRate >= MIN_WIN_RATE &&
+      r.trades >= MIN_TRADES
+    );
     const sortedByDistance = [...pending].sort((a, b) => (a.distanceToBreakout as number) - (b.distanceToBreakout as number));
     return sortedByDistance.slice(0, TOP_N);
   }, [results]);
@@ -83,7 +89,7 @@ export const DarvasTable: React.FC<{
             display: 'flex', alignItems: 'center', gap: 6, padding: '7px 14px', borderRadius: 8, fontSize: 12, fontWeight: 600,
             background: 'rgba(245,158,11,0.12)', color: AMBER, border: '1px solid rgba(245,158,11,0.3)',
           }}>
-            <TrendingUp size={13} /> Top {TOP_N} pending breakout candidates ({candidates.length})
+            <TrendingUp size={13} /> Top {TOP_N} pending breakout candidates ({candidates.length}) — Win% ≥ {MIN_WIN_RATE}, Trades ≥ {MIN_TRADES}
           </div>
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
@@ -122,7 +128,7 @@ export const DarvasTable: React.FC<{
               {sorted.length === 0 ? (
                 <tr>
                   <td colSpan={13} style={{ padding: '60px 20px', textAlign: 'center' }}>
-                    <div style={{ maxWidth: 320, margin: '0 auto' }}>
+                    <div style={{ maxWidth: 340, margin: '0 auto' }}>
                       <div style={{ width: 44, height: 44, borderRadius: 10, background: CARD, display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 12px' }}>
                         {isScanning ? <Flame size={20} color={AMBER} style={{ animation: 'pulse 1.5s infinite' }} /> : <Eye size={20} color={DIM} />}
                       </div>
@@ -130,7 +136,7 @@ export const DarvasTable: React.FC<{
                         {isScanning ? 'Scanning NSE universe for Darvas boxes...' : 'Run a scan to see pending breakout candidates'}
                       </div>
                       <div style={{ fontSize: 11, color: DIM, lineHeight: 1.6 }}>
-                        {isScanning ? 'Detecting confirmed boxes and distance to breakout' : 'Box confirmed (3-day top + 3-day bottom rule), price still below box top'}
+                        {isScanning ? 'Detecting confirmed boxes and distance to breakout' : `Box confirmed, price still below box top, and history shows Win% ≥ ${MIN_WIN_RATE} with at least ${MIN_TRADES} trades`}
                       </div>
                     </div>
                   </td>
@@ -191,7 +197,6 @@ export const DarvasTable: React.FC<{
                       <tr style={{ background: '#0d1018', borderBottom: `1px solid ${BORDER}` }}>
                         <td colSpan={13} style={{ padding: 20 }}>
                           <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-                            {/* Stat cards */}
                             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 10 }}>
                               {[
                                 ['Last close', `₹${r.lastClose}`, '#94a3b8', null],
@@ -208,7 +213,6 @@ export const DarvasTable: React.FC<{
                               ))}
                             </div>
 
-                            {/* Trade log */}
                             <div>
                               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
                                 <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, fontWeight: 600, color: TEXT }}>
