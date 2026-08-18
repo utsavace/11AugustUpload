@@ -147,6 +147,10 @@ export const BbCrsiTable: React.FC<{
                 <TH label="PF (BB)" field="bbCrsiPf" />
                 <TH label="Trades (BB)" field="bbCrsiTrades" />
                 <TH label="Avg% (BB)" field="bbCrsiAvg" />
+                {/* === POSITION-SIZING FEATURE START [2026-08-18] === */}
+                <TH label="Stop-Loss" />
+                <TH label="Position ₹" />
+                {/* === POSITION-SIZING FEATURE END [2026-08-18] === */}
                 <TH label="Signal" />
               </tr>
             </thead>
@@ -216,6 +220,15 @@ export const BbCrsiTable: React.FC<{
                         color: (r.bbCrsiAvg ?? 0) >= 0 ? '#22c55e' : '#ef4444' }}>
                         {r.bbCrsiAvg !== null ? `${r.bbCrsiAvg >= 0 ? '+' : ''}${r.bbCrsiAvg}%` : '—'}
                       </td>
+
+                      {/* === POSITION-SIZING FEATURE START [2026-08-18] === */}
+                      <td style={{ padding: '12px 14px', textAlign: 'right', fontFamily: MONO, color: '#ef4444' }}>
+                        {r.stopLoss !== null && r.stopLoss !== undefined ? `₹${r.stopLoss}` : '—'}
+                      </td>
+                      <td style={{ padding: '12px 14px', textAlign: 'right', fontFamily: MONO, fontWeight: 600, color: '#22c55e' }}>
+                        {r.positionSize !== null && r.positionSize !== undefined ? `₹${r.positionSize.toLocaleString('en-IN')}` : '—'}
+                      </td>
+                      {/* === POSITION-SIZING FEATURE END [2026-08-18] === */}
 
                       {/* Signal */}
                       <td style={{ padding: '12px 14px', textAlign: 'center' }}>

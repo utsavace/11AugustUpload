@@ -98,13 +98,19 @@ export const StockTable: React.FC<{
                 <TH label="Trades" />
                 <TH label="Avg ret" field="avgReturn" />
                 <TH label="Max DD" field="maxdd" />
+                {/* === POSITION-SIZING FEATURE START [2026-08-18] === */}
+                <TH label="ATR%" />
+                <TH label="Stop-Loss" />
+                <TH label="Position ₹" />
+                {/* === POSITION-SIZING FEATURE END [2026-08-18] === */}
                 <TH label="Status" />
               </tr>
             </thead>
             <tbody>
               {sorted.length === 0 ? (
                 <tr>
-                  <td colSpan={13} style={{ padding: '60px 20px', textAlign: 'center' }}>
+                  {/* colSpan bumped 13→16 for the 3 new ATR/Stop-Loss/Position columns [2026-08-18] */}
+                  <td colSpan={16} style={{ padding: '60px 20px', textAlign: 'center' }}>
                     <div style={{ maxWidth: 300, margin: '0 auto' }}>
                       <div style={{ width: 44, height: 44, borderRadius: 10, background: CARD, display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 12px' }}>
                         {isScanning ? <Flame size={20} color={PURPLE} style={{ animation: 'pulse 1.5s infinite' }} /> : <Eye size={20} color={DIM} />}
@@ -158,6 +164,11 @@ export const StockTable: React.FC<{
                       <td style={{ padding: '12px 14px', textAlign: 'right', fontFamily: MONO, fontSize: 12, color: DIM }}>{r.trades}</td>
                       <td style={{ padding: '12px 14px', textAlign: 'right', fontFamily: MONO, fontSize: 12, fontWeight: 600, color: r.avgReturn >= 0 ? '#22c55e' : '#ef4444' }}>{r.avgReturn >= 0 ? '+' : ''}{r.avgReturn}%</td>
                       <td style={{ padding: '12px 14px', textAlign: 'right', fontFamily: MONO, fontSize: 12, color: MUTED }}>-{r.maxdd}%</td>
+                      {/* === POSITION-SIZING FEATURE START [2026-08-18] === */}
+                      <td style={{ padding: '12px 14px', textAlign: 'right', fontFamily: MONO, fontSize: 12, color: DIM }}>{r.atrPct !== null && r.atrPct !== undefined ? `${r.atrPct}%` : '—'}</td>
+                      <td style={{ padding: '12px 14px', textAlign: 'right', fontFamily: MONO, fontSize: 12, color: '#ef4444' }}>{r.stopLoss !== null && r.stopLoss !== undefined ? `₹${r.stopLoss}` : '—'}</td>
+                      <td style={{ padding: '12px 14px', textAlign: 'right', fontFamily: MONO, fontSize: 12, fontWeight: 600, color: '#22c55e' }}>{r.positionSize !== null && r.positionSize !== undefined ? `₹${r.positionSize.toLocaleString('en-IN')}` : '—'}</td>
+                      {/* === POSITION-SIZING FEATURE END [2026-08-18] === */}
                       <td style={{ padding: '12px 14px', textAlign: 'right' }}>
                         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 8 }}>
                           {r.isLive
@@ -170,8 +181,18 @@ export const StockTable: React.FC<{
 
                     {isExp && (
                       <tr style={{ background: '#0d1018', borderBottom: `1px solid ${BORDER}` }}>
-                        <td colSpan={11} style={{ padding: 20 }}>
+                        {/* colSpan bumped 11→14 for the 3 new columns [2026-08-18] */}
+                        <td colSpan={14} style={{ padding: 20 }}>
                           <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+                            {/* === POSITION-SIZING FEATURE START [2026-08-18] === */}
+                            {r.positionSize !== null && r.positionSize !== undefined && (
+                              <div style={{ padding: 12, borderRadius: 8, background: 'rgba(34,197,94,0.06)', border: '1px solid rgba(34,197,94,0.2)', fontSize: 12, color: MUTED, lineHeight: 1.7 }}>
+                                <strong style={{ color: '#22c55e' }}>Suggested trade:</strong> Buy ₹{r.positionSize?.toLocaleString('en-IN')} worth
+                                &nbsp;(ATR {r.atrPct}%) · Stop-loss <strong style={{ color: '#ef4444' }}>₹{r.stopLoss}</strong>
+                                &nbsp;· Exit by CRSI&gt;90, or force-exit latest by <strong style={{ color: '#f59e0b' }}>{r.maxExitDate}</strong> (70-day max hold) if still open.
+                              </div>
+                            )}
+                            {/* === POSITION-SIZING FEATURE END [2026-08-18] === */}
                             {/* Stat cards */}
                             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 10 }}>
                               {[
