@@ -148,6 +148,52 @@ function calcCRSI(closes: number[]): (number | null)[] {
 
 interface Bar { t: number; o: number; h: number; l: number; c: number; }
 
+// === POSITION-SIZING FEATURE START [2026-08-18] ===
+// ATR(14) via Wilder smoothing — used for volatility-based stop-loss & position sizing.
+// To revert: delete this block down to POSITION-SIZING FEATURE END, plus the other
+// three blocks marked with the same [2026-08-18] tag in this file.
+function calcATR(bars: Bar[], period = 14): (number | null)[] {
+  const n = bars.length;
+  const result: (number | null)[] = new Array(n).fill(null);
+  if (n < 2) return result;
+  const tr: number[] = [];
+  for (let i = 1; i < n; i++) {
+    const { h, l } = bars[i], pc = bars[i - 1].c;
+    tr.push(Math.max(h - l, Math.abs(h - pc), Math.abs(l - pc)));
+  }
+  // tr[i] corresponds to bars[i+1]
+  let atr = tr.slice(0, period).reduce((a, b) => a + b, 0) / period;
+  result[period] = atr; // aligns with bars[period]
+  for (let i = period; i < tr.length; i++) {
+    atr = (atr * (period - 1) + tr[i]) / period;
+    result[i + 1] = atr;
+  }
+  return result;
+}
+
+// Position sizing: risk a fixed % of capital per trade, sized against a 2xATR stop distance.
+// capitalRs / riskPct come from the Settings modal (query params), with sane defaults.
+function calcPositionSize(lastClose: number, atrValue: number | null, capitalRs: number, riskPct: number) {
+  if (atrValue === null || atrValue <= 0 || lastClose <= 0) {
+    return { atrPct: null, stopLoss: null, positionSize: null };
+  }
+  const atrPct = (atrValue / lastClose) * 100;
+  const stopDistancePct = 2 * atrPct;               // 2x ATR stop, in %
+  const stopLoss = lastClose - 2 * atrValue;
+  const riskAmount = capitalRs * riskPct;
+  let positionSize = riskAmount / (stopDistancePct / 100);
+  const maxCap = capitalRs * 0.15;                   // never more than 15% of capital in one trade
+  const minCap = capitalRs * 0.005;                  // never less than 0.5% of capital
+  positionSize = Math.min(positionSize, maxCap);
+  positionSize = Math.max(positionSize, minCap);
+  return {
+    atrPct: +atrPct.toFixed(2),
+    stopLoss: +stopLoss.toFixed(2),
+    positionSize: Math.round(positionSize),
+  };
+}
+// === POSITION-SIZING FEATURE END [2026-08-18] ===
+
 function calcADX(bars: Bar[], period = 14): (number | null)[] {
   const result = new Array(bars.length).fill(null);
   const tr: number[] = [], pdm: number[] = [], mdm: number[] = [];
@@ -456,6 +502,11 @@ app.get('/api/scan', async (req, res) => {
   const crsiLimit  = Number(req.query.crsiLimit) || 10;
   const adxMin     = Number(req.query.adxMin)    || 29;
   const mode       = (req.query.mode as string) === 'lenient' ? 'lenient' : 'strict';
+  // === POSITION-SIZING FEATURE START [2026-08-18] ===
+  // capital & riskPct come from the Settings modal; defaults = Rs 1,00,000 capital, 0.5% risk/trade
+  const capitalRs  = Number(req.query.capital) > 0 ? Number(req.query.capital) : 100000;
+  const riskPct    = Number(req.query.riskPct) > 0 ? Number(req.query.riskPct) : 0.005;
+  // === POSITION-SIZING FEATURE END [2026-08-18] ===
   const customStr  = req.query.symbols ? String(req.query.symbols) : '';
   const stockList  = customStr
     ? customStr.split(',').map(s => s.trim().toUpperCase()).filter(Boolean)
@@ -489,6 +540,15 @@ app.get('/api/scan', async (req, res) => {
       const isLive = crsiNow !== null && adxNow !== null && emaNow !== null
         && crsiNow < crsiLimit && adxNow > adxMin && lastClose > emaNow;
 
+      // === POSITION-SIZING FEATURE START [2026-08-18] ===
+      const atrArr = calcATR(bars);
+      const atrNow = atrArr[n];
+      const { atrPct, stopLoss, positionSize } = calcPositionSize(lastClose, atrNow, capitalRs, riskPct);
+      // Max-hold display: 70 calendar days from "today" (informational only — the actual
+      // exit-by date is measured from the day you enter, not from scan day).
+      const maxExitDate = new Date(Date.now() + 70 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+      // === POSITION-SIZING FEATURE END [2026-08-18] ===
+
       // BB+CRSI — double confirmation
       const bbCrsiTrades = backtestBbCrsi(bars, 15, adxMin);
       const bbCrsiGate   = bbCrsiTrades.length >= 10 && gatePass(bbCrsiTrades, mode);
@@ -510,6 +570,9 @@ app.get('/api/scan', async (req, res) => {
         winRate: stats.wr, pf: stats.pf, avgReturn: stats.avg, maxdd: stats.md,
         wins: stats.wins, losses: stats.losses, trades: trades.length,
         isLive,
+        // === POSITION-SIZING FEATURE START [2026-08-18] ===
+        atrPct, stopLoss, positionSize, maxExitDate,
+        // === POSITION-SIZING FEATURE END [2026-08-18] ===
         // BB+CRSI fields
         bbCrsiGate,
         bbCrsiLive:   isBbLive,
