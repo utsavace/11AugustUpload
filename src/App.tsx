@@ -20,6 +20,12 @@ export default function App() {
   });
   const [viewMode, setViewMode]           = useState<'live' | 'all'>('all');
   const [customSymbols, setCustomSymbols] = useState<string>('');
+  // === POSITION-SIZING FEATURE START [2026-08-18] ===
+  // To revert: remove these two lines, the &capital=/&riskPct= additions to `query` below,
+  // and the capital/setCapital/riskPct/setRiskPct props passed to <SettingsModal> further down.
+  const [capital, setCapital] = useState<number>(100000);
+  const [riskPct, setRiskPct] = useState<number>(0.005);
+  // === POSITION-SIZING FEATURE END [2026-08-18] ===
   const [isStrategyModalOpen, setIsStrategyModalOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<'crsi' | 'bbcrsi' | 'darvas'>('crsi');
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
@@ -64,6 +70,9 @@ export default function App() {
 
     let query = `?crsiLimit=${preset.crsi}&adxMin=${preset.adx}&mode=${activeMode}`;
     if (customSymbols.trim()) query += `&symbols=${encodeURIComponent(customSymbols.trim())}`;
+    // === POSITION-SIZING FEATURE START [2026-08-18] ===
+    query += `&capital=${capital}&riskPct=${riskPct}`;
+    // === POSITION-SIZING FEATURE END [2026-08-18] ===
 
     const es = new EventSource(`/api/scan${query}`);
     eventSourceRef.current = es;
@@ -342,7 +351,10 @@ export default function App() {
       </footer>
 
       <StrategyInfoModal isOpen={isStrategyModalOpen} onClose={() => setIsStrategyModalOpen(false)} />
-      <SettingsModal isOpen={isSettingsModalOpen} onClose={() => setIsSettingsModalOpen(false)} customSymbols={customSymbols} setCustomSymbols={setCustomSymbols} />
+      {/* === POSITION-SIZING FEATURE START [2026-08-18]: capital/setCapital/riskPct/setRiskPct props === */}
+      <SettingsModal isOpen={isSettingsModalOpen} onClose={() => setIsSettingsModalOpen(false)} customSymbols={customSymbols} setCustomSymbols={setCustomSymbols}
+        capital={capital} setCapital={setCapital} riskPct={riskPct} setRiskPct={setRiskPct} />
+      {/* === POSITION-SIZING FEATURE END [2026-08-18] === */}
     </div>
   );
 }

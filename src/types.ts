@@ -24,6 +24,12 @@ export interface StockResult {
   losses: number;
   trades: number;
   isLive: boolean;
+  // === POSITION-SIZING FEATURE START [2026-08-18] ===
+  atrPct: number | null;       // ATR(14) as % of last close
+  stopLoss: number | null;     // suggested stop-loss price = lastClose - 2xATR
+  positionSize: number | null; // suggested Rs to deploy, based on capital & risk% from Settings
+  maxExitDate: string | null;  // informational: entry-date + 70 calendar days
+  // === POSITION-SIZING FEATURE END [2026-08-18] ===
   // BB + ConnorsRSI fields
   bbCrsiGate: boolean;
   bbCrsiLive: boolean;
